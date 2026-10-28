@@ -4,6 +4,14 @@ Personal notification API built with Node.js, Express, Baileys, and a TOTP-only 
 
 > **Important:** Baileys is an unofficial WhatsApp Web client, not a WhatsApp-approved business API. WhatsApp may restrict accounts using unofficial automation. Use only for low-volume, consent-based notifications. For production-critical business messaging, prefer the official WhatsApp Business Platform.
 
+## WhatsApp connection behaviour
+
+- The WhatsApp socket is kept connected while the service is running; there is no application-level 60-second idle disconnect.
+- The Baileys keep-alive interval is set to 10 seconds. This is a connection-health setting, not a guarantee of recipient delivery or decryption.
+- Reconnect attempts use bounded backoff. A logged-out session is not automatically deleted.
+- Auth export snapshots are refreshed after Signal key-store writes as well as credential updates. If you use an environment variable to persist/export the session across Render restarts, make sure the latest exported session is stored securely. Treat it like a password.
+
+
 ## Features
 
 - `GET /health`: minimal HTML response, no database or WhatsApp check, `Cache-Control: no-store`.

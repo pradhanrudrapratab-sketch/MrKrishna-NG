@@ -25,7 +25,6 @@ let pairingCode = null;
 let pairingAttempts = 0;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
-let idleTimer = null;
 let lastActivityAt = null;
 let lastError = null;
 let sendQueue = Promise.resolve();
@@ -71,20 +70,9 @@ async function readExportFromDisk() {
   } catch { /* No auth files yet. */ }
 }
 
-function scheduleIdleDisconnect() {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(async () => {
-    if (Date.now() - (lastActivityAt || 0) >= 60_000) await disconnectSocket('idle timeout');
-    else scheduleIdleDisconnect();
-  }, 60_000);
-  idleTimer.unref?.();
-}
-
 async function disconnectSocket(reason = 'manual') {
   manuallyDisconnecting = true;
-  if (idleTimer) clearTimeout(idleTimer);
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  idleTimer = null;
   reconnectTimer = null;
   const old = socket;
   socket = null;
@@ -92,7 +80,7 @@ async function disconnectSocket(reason = 'manual') {
   if (old) {
     try { old.end(undefined); } catch {}
   }
-  if (reason === 'idle timeout') connectionStatus = 'idle';
+  if (reason === 'shutdown') connectionStatus = 'disconnected';
   manuallyDisconnecting = false;
 }
 
@@ -148,6 +136,15 @@ async function createSocket({ requestPairing = false } = {}) {
     if (latestExport && !(await fs.stat(`${authDir}/creds.json`).catch(() => null))) await applyEnvSession();
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+
+    // Keep the exported session snapshot in sync with Signal key-store writes too,
+    // not only creds.update events. Render's /tmp directory is ephemeral.
+    const originalKeySet = state.keys.set.bind(state.keys);
+    state.keys.set = async data => {
+      await originalKeySet(data);
+      await readExportFromDisk();
+    };
+
     const { version } = await fetchLatestBaileysVersion();
     const sock = makeWASocket({
       version,
@@ -163,7 +160,7 @@ async function createSocket({ requestPairing = false } = {}) {
       generateHighQualityLinkPreview: false,
       defaultQueryTimeoutMs: 60_000,
       connectTimeoutMs: 60_000,
-      keepAliveIntervalMs: 30_000,
+      keepAliveIntervalMs: 10_000,
       retryRequestDelayMs: 250,
       maxMsgRetryCount: 5,
     });
@@ -187,7 +184,6 @@ async function createSocket({ requestPairing = false } = {}) {
         lastError = null;
         await readExportFromDisk();
         console.log('[WhatsApp] Connected successfully.');
-        scheduleIdleDisconnect();
       }
 
       if (update.connection === 'close') {
@@ -264,7 +260,6 @@ export async function sendWhatsAppMessage(to, text) {
     const jid = `${digits}@s.whatsapp.net`;
     const result = await sock.sendMessage(jid, { text });
     lastActivityAt = Date.now();
-    scheduleIdleDisconnect();
     return { messageId: result?.key?.id || null };
   };
   const next = sendQueue.then(task, task);
@@ -280,7 +275,7 @@ export function getWhatsAppStatus() {
     lastActivityAt: lastActivityAt ? new Date(lastActivityAt).toISOString() : null,
     lastError,
     sessionAvailable: Boolean(latestExport || config.sessionExport),
-    idleDisconnectSeconds: 60,
+    idleDisconnectSeconds: 0,
   };
 }
 
