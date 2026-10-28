@@ -11,6 +11,9 @@ let connectionStatus = config.sessionExport ? 'connecting' : 'not-paired';
 let pairingCode = null;
 let pairingAttempts = 0;
 let idleTimer = null;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
 let lastActivityAt = null;
 let lastError = null;
 let sendQueue = Promise.resolve();
@@ -70,6 +73,8 @@ function scheduleIdleDisconnect() {
 
 async function disconnectSocket(reason = 'manual') {
   if (idleTimer) clearTimeout(idleTimer);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
   idleTimer = null;
   const old = socket;
   socket = null;
@@ -97,6 +102,9 @@ async function createSocket({ requestPairing = false } = {}) {
     });
     sock.ev.on('connection.update', async (update) => {
       if (update.connection === 'open') {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        reconnectAttempts = 0;
         connectionStatus = 'connected';
         pairingCode = null;
         lastError = null;
@@ -104,21 +112,54 @@ async function createSocket({ requestPairing = false } = {}) {
         scheduleIdleDisconnect();
       }
       if (update.connection === 'close') {
-        // Ignore close events from a socket that was already replaced during a retry.
         if (socket !== sock) return;
         const code = new Boom(update.lastDisconnect?.error)?.output?.statusCode;
-        connectionStatus = code === DisconnectReason.loggedOut ? 'logged-out' : 'disconnected';
         lastError = `Connection closed (code ${code ?? 'unknown'}).`;
+
+        try {
+          await saveCreds();
+          await readExportFromDisk();
+        } catch {}
+
         socket = null;
         connecting = null;
+
         if (code === DisconnectReason.loggedOut) {
           pairingCode = null;
-          console.warn('[WhatsApp] Logged out; manual pairing retry required.');
+          connectionStatus = 'logged-out';
+          console.warn('[WhatsApp] Logged out; manual re-pairing is required.');
+          return;
         }
+
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          connectionStatus = 'disconnected';
+          lastError = `Reconnect limit reached (code ${code ?? 'unknown'}).`;
+          console.error('[WhatsApp] Reconnect limit reached; check the session before retrying.');
+          return;
+        }
+
+        reconnectAttempts += 1;
+        const waitMs = code === DisconnectReason.restartRequired
+          ? 1000
+          : Math.min(1000 * (2 ** (reconnectAttempts - 1)), 15000);
+
+        connectionStatus = 'reconnecting';
+        console.log(`[WhatsApp] Reconnecting, attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}.`);
+
+        reconnectTimer = setTimeout(() => {
+          if (socket || connecting) return;
+          createSocket().catch(error => {
+            lastError = error.message;
+            connectionStatus = 'error';
+          });
+        }, waitMs);
+        reconnectTimer.unref?.();
       }
     });
     if (requestPairing && !state.creds?.registered) {
       if (pairingAttempts >= 2) throw new Error('Maximum two pairing-code requests reached in this process. Restart service before another attempt.');
+      // Give the WebSocket time to initialise, as in the reference project.
+      await new Promise(resolve => setTimeout(resolve, 3000));
       pairingAttempts += 1;
       const code = await sock.requestPairingCode(config.whatsappNumber);
       pairingCode = String(code).match(/.{1,4}/g)?.join('-') || String(code);
