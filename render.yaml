@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: mrkrishna-whatsapp-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.1
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: OWNER_NUMBER
+        sync: false
+      - key: WHATSAPP_NUMBER
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: ADMIN_TOTP_SECRET
+        sync: false
+      - key: WHATSAPP_SESSION
+        sync: false
