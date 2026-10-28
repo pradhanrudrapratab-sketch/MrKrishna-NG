@@ -10,7 +10,7 @@ Personal notification API built with Node.js, Express, Baileys, and a TOTP-only 
 - `POST /api/notify`: no API key; always targets `OWNER_NUMBER`; limit 10 requests per IP per minute.
 - `POST /api/send`: requires `X-API-Key`; optional `to` falls back to `OWNER_NUMBER`; invalid provided number returns HTTP 400.
 - TOTP-only admin login; no password; HttpOnly, SameSite=Strict session cookie and server-side session revocation.
-- Pairing code flow (no QR), admin Retry, max two pairing-code requests per process.
+- Pairing code flow (no QR), admin Retry, max three pairing-code requests per process.
 - Reuses the socket across requests and disconnects after 60 seconds of send inactivity.
 - API docs, Try API, recent in-memory logs, session export and format check in the admin UI.
 - Fixed message header `MrKrishna NG` and footer `Powered by @mrkrishna.in`.
@@ -44,7 +44,7 @@ Open `http://localhost:3000/` for the admin panel and `http://localhost:3000/hea
    - `ADMIN_TOTP_SECRET`: Base32 secret from `npm run setup:totp`.
    - `WHATSAPP_SESSION`: leave blank for first pairing; after pairing, paste the session export from admin here.
 4. Deploy. Open `/` and sign in with the six-digit authenticator code.
-5. Go to **Pairing & session** → **Request pairing code**. On the secondary phone, open WhatsApp → Linked Devices → Link with phone number, and enter the code.
+5. Go to **Pairing & session** → **Request pairing code**. On the WhatsApp account you want to link, open Linked Devices → Link a device → Link with phone number instead, then enter the code.
 6. Once paired, export the session from the admin panel and copy it into Render's `WHATSAPP_SESSION`, then redeploy.
 7. Open `/health` to check only whether the HTTP service responds.
 
@@ -131,3 +131,8 @@ npm run check
 ```
 
 This checks JavaScript syntax. It does not prove WhatsApp pairing or delivery; those require deployment and a real test send.
+
+
+## Pairing implementation
+
+This version uses the stable Baileys 6.7.21 pairing flow inspired by the supplied Knight Bot project: fetch the current Baileys version, use a cached Signal key store, validate the international phone number, wait briefly before requesting the phone-number pairing code, and preserve the complete auth store for export. The old project’s QR generator, Mega upload code, automatic session-file WhatsApp messages, and session-directory deletion were intentionally excluded.
